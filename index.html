@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <title>Product Image Description Bot</title>
 
-  <!-- Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
 
   <style>
@@ -35,8 +34,7 @@
       padding: 28px;
       border-radius: 18px;
       backdrop-filter: blur(14px);
-      background:transparent;
-      box-shadow:transparent;
+      background: transparent;
     }
 
     .bot-header {
@@ -49,27 +47,22 @@
       margin-bottom: 10px;
     }
 
-    .bot-header h2 {
-      font-size: 18px;
-      font-weight: 700;
-    }
-
-    .subtitle {
-      font-size: 13px;
-      color: #94a3b8;
-    }
-
-    input[type="text"],
-    input[type="file"] {
+    input, button {
       width: 100%;
       margin-top: 12px;
       padding: 12px;
       border-radius: 8px;
       border: none;
-      outline: none;
       background: #020617;
       color: #e5e7eb;
       font-size: 14px;
+    }
+
+    button {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 18px;
     }
 
     #preview {
@@ -77,19 +70,6 @@
       margin-top: 12px;
       border-radius: 10px;
       display: none;
-      border: 1px solid rgba(255,255,255,0.15);
-    }
-
-    button {
-      width: 100%;
-      margin-top: 18px;
-      padding: 12px;
-      border-radius: 8px;
-      border: none;
-      background: linear-gradient(135deg, #2563eb, #1d4ed8);
-      color: white;
-      font-weight: 600;
-      cursor: pointer;
     }
 
     .reply {
@@ -99,7 +79,6 @@
       border-radius: 8px;
       min-height: 70px;
       white-space: pre-wrap;
-      font-size: 14px;
     }
 
     footer {
@@ -107,88 +86,105 @@
       font-size: 12px;
       color: #94a3b8;
     }
-
-    footer span {
-      color: #60a5fa;
-      font-weight: 600;
-    }
   </style>
 </head>
 
 <body>
 
-  <div class="chat-box">
-
-    <div class="bot-header">
-      <img src="https://cdn.wallpapersafari.com/8/15/DRoHpE.jpg" alt="Bot" />
-      <h2>Welcome to Product Image Description Bot</h2>
-      <p class="subtitle">Upload an image or ask a question</p>
-    </div>
-
-    <input type="text" id="text" placeholder="Ask something about the product..." />
-    <input type="file" id="image" accept="image/*" onchange="previewImage()" />
-
-    <!-- IMAGE PREVIEW -->
-    <img id="preview" />
-
-    <button onclick="sendMessage()">Generate Response</button>
-
-    <div class="reply" id="reply"></div>
+<div class="chat-box">
+  <div class="bot-header">
+    <img src="https://cdn.wallpapersafari.com/8/15/DRoHpE.jpg" />
+    <h2>Product Image Description Bot</h2>
   </div>
 
-  <footer>
-    Built with ❤️ by <span>Gatik</span>
-  </footer>
+  <input type="text" id="text" placeholder="Ask something about the product..." />
+  <input type="file" id="image" accept="image/*" onchange="previewImage()" />
 
-  <script>
-  function previewImage() {
-    const file = document.getElementById("image").files[0];
-    const preview = document.getElementById("preview");
+  <img id="preview" />
+  <button onclick="sendMessage()">Generate Response</button>
 
-    if (file) {
-      preview.src = URL.createObjectURL(file);
-      preview.style.display = "block";
-    } else {
-      preview.style.display = "none";
+  <div class="reply" id="reply"></div>
+</div>
+
+<footer>Built with ❤️ by <span>Gatik</span></footer>
+
+<script>
+let optimizedImageBlob = null;
+
+function previewImage() {
+  const file = document.getElementById("image").files[0];
+  const preview = document.getElementById("preview");
+
+  if (!file) return;
+
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = "block";
+
+  optimizeImage(file);
+}
+
+// 🔥 CORE OPTIMIZATION LOGIC
+function optimizeImage(file) {
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const MAX_SIZE = 1024;
+    let width = img.width;
+    let height = img.height;
+
+    if (width > height && width > MAX_SIZE) {
+      height *= MAX_SIZE / width;
+      width = MAX_SIZE;
+    } else if (height > MAX_SIZE) {
+      width *= MAX_SIZE / height;
+      height = MAX_SIZE;
     }
+
+    canvas.width = width;
+    canvas.height = height;
+    ctx.drawImage(img, 0, 0, width, height);
+
+    canvas.toBlob(blob => {
+      optimizedImageBlob = blob;
+      console.log("Optimized size:", (blob.size / 1024 / 1024).toFixed(2), "MB");
+    }, "image/jpeg", 0.75);
+  };
+}
+
+async function sendMessage() {
+  const text = document.getElementById("text").value;
+  const replyDiv = document.getElementById("reply");
+
+  if (!text && !optimizedImageBlob) {
+    replyDiv.innerText = "Please enter text or upload an image.";
+    return;
   }
 
-  async function sendMessage() {
-    const text = document.getElementById("text").value;
-    const imageInput = document.getElementById("image");
-    const image = imageInput.files[0];
-    const replyDiv = document.getElementById("reply");
+  replyDiv.innerText = "Thinking...";
 
-    if (!text && !image) {
-      replyDiv.innerText = "Please enter text or upload an image.";
-      return;
-    }
+  const formData = new FormData();
+  if (text) formData.append("text", text);
+  if (optimizedImageBlob) formData.append("image", optimizedImageBlob, "optimized.jpg");
 
-    replyDiv.innerText = "Thinking...";
+  try {
+    const res = await fetch("https://multimodal-chatbot-backend.onrender.com/chat", {
+      method: "POST",
+      body: formData
+    });
 
-    const formData = new FormData();
-    if (text) formData.append("text", text);
-    if (image) formData.append("image", image);
+    const data = await res.json();
+    replyDiv.innerText = data.reply;
 
-    try {
-      const response = await fetch(
-        "https://multimodal-chatbot-backend.onrender.com/chat",
-        {
-          method: "POST",
-          body: formData
-        }
-      );
-
-      const data = await response.json();
-      replyDiv.innerText = data.reply;
-
-      imageInput.value = "";
-      document.getElementById("preview").style.display = "none";
-
-    } catch (err) {
-      replyDiv.innerText = "Error connecting to backend.";
-    }
+  } catch {
+    replyDiv.innerText = "Error connecting to backend.";
   }
+}
 </script>
+
 </body>
 </html>
+
