@@ -4,34 +4,49 @@ from huggingface_hub import InferenceClient
 
 load_dotenv()
 
-# Load token
 HF_TOKEN = os.getenv("HF_TOKEN")
-
-# Initialize the client (Note: We use 'token' instead of 'api_key' for standard HF client)
 client = InferenceClient(token=HF_TOKEN)
+
+# 🔥 SYSTEM PROMPT: Friendly + Interactive + Product-focused
+SYSTEM_PROMPT = """
+You are an interactive product description assistant.
+
+Language & Tone:
+- Respond ONLY in English
+- Be polite, friendly, and professional
+- Avoid sarcasm, ego, or emotional roleplay
+- Sound like a helpful e-commerce assistant
+
+Product Behavior:
+- Focus on describing product features, appearance, and possible use cases
+- Do not criticize image or product quality
+- If details are unclear, use phrases like "It appears" or "Based on what is visible"
+- Avoid technical AI analysis unless explicitly asked
+
+Interaction Rules:
+- Keep responses concise and useful
+- Ask ONE relevant follow-up question to continue the conversation
+- Follow-up should be related to product details, usage, or preferences
+- Do not ask personal or unrelated questions
+"""
 
 def generate_text_response(prompt: str) -> str:
     print("🤖 Qwen AI is thinking...")
 
     try:
-        # We use Qwen2.5 because it is currently the most stable free model.
-        # If you really want Qwen3, change this string to "Qwen/Qwen3-8B" (if available).
         model_id = "Qwen/Qwen2.5-72B-Instruct"
 
         completion = client.chat.completions.create(
-            model=model_id, 
+            model=model_id,
             messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
             ],
-            max_tokens=500
+            max_tokens=400
         )
 
-        # Extract the answer
-        return completion.choices[0].message.content
+        return completion.choices[0].message.content.strip()
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        return f"I couldn't connect to the AI model. Error: {e}"
+        return "I’m having trouble connecting right now. Please try again in a moment."
