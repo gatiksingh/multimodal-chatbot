@@ -368,8 +368,9 @@
 </div>
 
 <input type="file" id="fileInput" accept="image/*" onchange="handleFileSelect()" />
-
 <script>
+// 1. Variable to store the bot's "Memory"
+let lastImageContext = ""; 
 let optimizedImageBlob = null;
 
 function autoResize(textarea) {
@@ -388,17 +389,16 @@ function handleFileSelect() {
   const file = document.getElementById("fileInput").files[0];
   if (!file) return;
 
-  // Show Preview Immediately
   const previewContainer = document.getElementById("previewContainer");
   const previewImage = document.getElementById("previewImage");
   previewImage.src = URL.createObjectURL(file);
   previewContainer.classList.add("active");
 
-  // Reset optimized blob
   optimizedImageBlob = null;
-  
-  // Start Optimization
   optimizeImage(file);
+  
+  // 2. Clear old memory when a NEW image is selected
+  lastImageContext = ""; 
 }
 
 function removeImage() {
@@ -415,50 +415,35 @@ function optimizeImage(file) {
   img.onload = () => {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
-
     const MAX = 1024;
     let w = img.width;
     let h = img.height;
 
-    if (w > h && w > MAX) {
-      h *= MAX / w;
-      w = MAX;
-    } else if (h > MAX) {
-      w *= MAX / h;
-      h = MAX;
-    }
+    if (w > h && w > MAX) { h *= MAX / w; w = MAX; }
+    else if (h > MAX) { w *= MAX / h; h = MAX; }
 
     canvas.width = w;
     canvas.height = h;
     ctx.drawImage(img, 0, 0, w, h);
-
-    canvas.toBlob(blob => {
-      optimizedImageBlob = blob;
-      console.log("✅ Image optimized and ready.");
-    }, "image/jpeg", 0.7);
+    canvas.toBlob(blob => { optimizedImageBlob = blob; }, "image/jpeg", 0.7);
   };
 }
 
 function addMessage(text, isUser, imageUrl = null) {
   const chatContainer = document.getElementById("chatContainer");
   const emptyState = chatContainer.querySelector('.empty-state');
-  
-  if (emptyState) {
-    emptyState.remove();
-  }
+  if (emptyState) emptyState.remove();
 
   const messageDiv = document.createElement("div");
   messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
 
   const avatar = document.createElement("div");
   avatar.className = "message-avatar";
-  
   if (isUser) {
     avatar.textContent = "Y";
   } else {
     const img = document.createElement("img");
     img.src = "https://cdn.wallpapersafari.com/8/15/DRoHpE.jpg";
-    img.alt = "Bot";
     avatar.appendChild(img);
   }
 
@@ -471,9 +456,9 @@ function addMessage(text, isUser, imageUrl = null) {
     img.src = imageUrl;
     content.appendChild(img);
     if (text) {
-      const textNode = document.createElement("div");
-      textNode.textContent = text;
-      content.appendChild(textNode);
+      const textDiv = document.createElement("div");
+      textDiv.textContent = text;
+      content.appendChild(textDiv);
     }
   } else {
     content.textContent = text;
@@ -490,13 +475,11 @@ function addTypingIndicator() {
   const messageDiv = document.createElement("div");
   messageDiv.className = "message bot";
   messageDiv.id = "typingIndicator";
-
+  
   const avatar = document.createElement("div");
   avatar.className = "message-avatar";
-  
   const img = document.createElement("img");
   img.src = "https://cdn.wallpapersafari.com/8/15/DRoHpE.jpg";
-  img.alt = "Bot";
   avatar.appendChild(img);
 
   const content = document.createElement("div");
@@ -511,33 +494,24 @@ function addTypingIndicator() {
 
 function removeTypingIndicator() {
   const indicator = document.getElementById("typingIndicator");
-  if (indicator) {
-    indicator.remove();
-  }
+  if (indicator) indicator.remove();
 }
 
-// --- MAIN FIX HERE ---
 async function sendMessage() {
   const input = document.getElementById("messageInput");
   const text = input.value.trim();
-  const fileInput = document.getElementById("fileInput"); // Get the raw file input
+  const fileInput = document.getElementById("fileInput");
   const sendBtn = document.getElementById("sendBtn");
 
-  // 1. Determine which image to send (Optimized OR Original)
+  // Determine Image Source
   let imageToSend = optimizedImageBlob;
-  
-  // FALLBACK: If optimization isn't done, use the original file
   if (!imageToSend && fileInput.files.length > 0) {
-      console.log("⚠️ Using original file (optimization not ready)");
       imageToSend = fileInput.files[0];
   }
 
-  // 2. Validation: Don't send if empty
-  if (!text && !imageToSend) {
-    return;
-  }
+  if (!text && !imageToSend) return;
 
-  // 3. UI Updates
+  // Add Message to UI
   const imageUrl = imageToSend ? URL.createObjectURL(imageToSend) : null;
   addMessage(text || "Uploaded an image", true, imageUrl);
 
@@ -548,37 +522,47 @@ async function sendMessage() {
   sendBtn.disabled = true;
   addTypingIndicator();
 
-  // 4. Construct Data
   const formData = new FormData();
-  if (text) formData.append("text", text);
   
-  if (imageToSend) {
-    // If it's the raw file, it has a .name property. If it's a blob, we give it one.
-    const filename = imageToSend.name || "optimized_image.jpg";
-    formData.append("image", imageToSend, filename);
+  // --- CONTEXT HANDLING LOGIC ---
+  let finalPrompt = text;
+
+  // If we are NOT sending an image, but we have "memory" of the previous one
+  if (!imageToSend && lastImageContext) {
+      console.log("Injecting context into prompt...");
+      // We prepend the previous description to the user's question
+      finalPrompt = `(Context: The user previously uploaded an image described as: "${lastImageContext}")\n\nUser Question: ${text}`;
   }
 
-  // 5. Send Request
+  if (finalPrompt) formData.append("text", finalPrompt);
+  
+  if (imageToSend) {
+      const fileName = imageToSend.name || "image.jpg";
+      formData.append("image", imageToSend, fileName);
+  }
+
   try {
     const res = await fetch("https://multimodal-chatbot-backend.onrender.com/chat", {
       method: "POST",
       body: formData
     });
 
-    if (!res.ok) {
-        throw new Error(`Server error: ${res.status}`);
-    }
-
     const data = await res.json();
     removeTypingIndicator();
+    
+    // 3. Save the bot's reply as the new "Memory"
+    if (data.reply) {
+        lastImageContext = data.reply;
+    }
+    
     addMessage(data.reply, false);
 
   } catch (error) {
-    console.error("Error:", error);
     removeTypingIndicator();
-    addMessage("Sorry, something went wrong. Please try again.", false);
+    addMessage("Error connecting to server.", false);
   } finally {
     sendBtn.disabled = false;
   }
 }
 </script>
+
