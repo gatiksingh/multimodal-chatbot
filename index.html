@@ -369,10 +369,12 @@
 
 <input type="file" id="fileInput" accept="image/*" onchange="handleFileSelect()" />
 <script>
-// 1. Variable to store the bot's "Memory"
-let lastImageContext = ""; 
-let optimizedImageBlob = null;
+// --- STATE VARIABLES ---
+let lastImageContext = "";      // Stores the bot's "Memory" of the last image
+let optimizedImageBlob = null;  // Stores the compressed file
+let isOptimizing = false;       // Safety lock for large files
 
+// --- UI UTILITIES ---
 function autoResize(textarea) {
   textarea.style.height = 'auto';
   textarea.style.height = textarea.scrollHeight + 'px';
@@ -385,27 +387,49 @@ function handleKeyPress(event) {
   }
 }
 
+// --- FILE HANDLING & OPTIMIZATION ---
 function handleFileSelect() {
   const file = document.getElementById("fileInput").files[0];
   if (!file) return;
 
+  // 1. Show Preview
   const previewContainer = document.getElementById("previewContainer");
   const previewImage = document.getElementById("previewImage");
   previewImage.src = URL.createObjectURL(file);
   previewContainer.classList.add("active");
 
+  // 2. Lock the system for optimization
   optimizedImageBlob = null;
-  optimizeImage(file);
-  
-  // 2. Clear old memory when a NEW image is selected
+  isOptimizing = true;
+  updateSendButtonState(); // Disable button
+
+  // 3. Clear old memory (New image = New context)
   lastImageContext = ""; 
+  
+  // 4. Start Compression
+  optimizeImage(file);
 }
 
 function removeImage() {
   const previewContainer = document.getElementById("previewContainer");
   previewContainer.classList.remove("active");
   optimizedImageBlob = null;
+  isOptimizing = false;
   document.getElementById("fileInput").value = "";
+  updateSendButtonState(); // Re-enable button
+}
+
+function updateSendButtonState() {
+    const sendBtn = document.getElementById("sendBtn");
+    if (isOptimizing) {
+        sendBtn.disabled = true;
+        sendBtn.style.opacity = "0.5";
+        sendBtn.style.cursor = "wait";
+    } else {
+        sendBtn.disabled = false;
+        sendBtn.style.opacity = "1";
+        sendBtn.style.cursor = "pointer";
+    }
 }
 
 function optimizeImage(file) {
@@ -415,20 +439,40 @@ function optimizeImage(file) {
   img.onload = () => {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
+
+    // Resize Logic: Huge 25MB images become manageable 1024px images
     const MAX = 1024;
     let w = img.width;
     let h = img.height;
 
-    if (w > h && w > MAX) { h *= MAX / w; w = MAX; }
-    else if (h > MAX) { w *= MAX / h; h = MAX; }
+    if (w > h && w > MAX) {
+      h *= MAX / w;
+      w = MAX;
+    } else if (h > MAX) {
+      w *= MAX / h;
+      h = MAX;
+    }
 
     canvas.width = w;
     canvas.height = h;
     ctx.drawImage(img, 0, 0, w, h);
-    canvas.toBlob(blob => { optimizedImageBlob = blob; }, "image/jpeg", 0.7);
+
+    canvas.toBlob(blob => {
+      optimizedImageBlob = blob;
+      isOptimizing = false; // Unlock the system
+      console.log(`✅ Image compressed: ${(blob.size / 1024).toFixed(2)} KB`);
+      updateSendButtonState();
+    }, "image/jpeg", 0.7);
+  };
+
+  img.onerror = () => {
+      console.error("Image failed to load");
+      isOptimizing = false;
+      updateSendButtonState();
   };
 }
 
+// --- MESSAGE UI ---
 function addMessage(text, isUser, imageUrl = null) {
   const chatContainer = document.getElementById("chatContainer");
   const emptyState = chatContainer.querySelector('.empty-state');
@@ -458,6 +502,7 @@ function addMessage(text, isUser, imageUrl = null) {
     if (text) {
       const textDiv = document.createElement("div");
       textDiv.textContent = text;
+      textDiv.style.marginTop = "8px";
       content.appendChild(textDiv);
     }
   } else {
@@ -497,21 +542,25 @@ function removeTypingIndicator() {
   if (indicator) indicator.remove();
 }
 
+// --- MAIN SEND LOGIC ---
 async function sendMessage() {
   const input = document.getElementById("messageInput");
   const text = input.value.trim();
-  const fileInput = document.getElementById("fileInput");
   const sendBtn = document.getElementById("sendBtn");
 
-  // Determine Image Source
-  let imageToSend = optimizedImageBlob;
-  if (!imageToSend && fileInput.files.length > 0) {
-      imageToSend = fileInput.files[0];
+  // 1. SAFETY CHECK: Block if still processing a large image
+  if (isOptimizing) {
+      alert("Please wait a moment, compressing large image...");
+      return;
   }
+
+  // 2. Determine what to send
+  // We ONLY use the optimized blob to protect the server
+  let imageToSend = optimizedImageBlob; 
 
   if (!text && !imageToSend) return;
 
-  // Add Message to UI
+  // 3. Update UI
   const imageUrl = imageToSend ? URL.createObjectURL(imageToSend) : null;
   addMessage(text || "Uploaded an image", true, imageUrl);
 
@@ -522,23 +571,23 @@ async function sendMessage() {
   sendBtn.disabled = true;
   addTypingIndicator();
 
+  // 4. Construct Data
   const formData = new FormData();
   
-  // --- CONTEXT HANDLING LOGIC ---
+  // --- CONTEXT INJECTION (Your Feature) ---
   let finalPrompt = text;
 
-  // If we are NOT sending an image, but we have "memory" of the previous one
+  // If NO new image is being sent, but we have memory of the last one
   if (!imageToSend && lastImageContext) {
       console.log("Injecting context into prompt...");
-      // We prepend the previous description to the user's question
       finalPrompt = `(Context: The user previously uploaded an image described as: "${lastImageContext}")\n\nUser Question: ${text}`;
   }
 
   if (finalPrompt) formData.append("text", finalPrompt);
   
   if (imageToSend) {
-      const fileName = imageToSend.name || "image.jpg";
-      formData.append("image", imageToSend, fileName);
+      // Always send the compressed version
+      formData.append("image", imageToSend, "compressed.jpg");
   }
 
   try {
@@ -547,10 +596,12 @@ async function sendMessage() {
       body: formData
     });
 
+    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+
     const data = await res.json();
     removeTypingIndicator();
     
-    // 3. Save the bot's reply as the new "Memory"
+    // 5. Update Memory
     if (data.reply) {
         lastImageContext = data.reply;
     }
@@ -558,11 +609,11 @@ async function sendMessage() {
     addMessage(data.reply, false);
 
   } catch (error) {
+    console.error("Error:", error);
     removeTypingIndicator();
-    addMessage("Error connecting to server.", false);
+    addMessage("Sorry, I'm having trouble connecting to the server. Please try again.", false);
   } finally {
     sendBtn.disabled = false;
   }
 }
 </script>
-
