@@ -371,7 +371,6 @@
 
 <script>
 let optimizedImageBlob = null;
-let conversationHistory = [];
 
 function autoResize(textarea) {
   textarea.style.height = 'auto';
@@ -389,12 +388,16 @@ function handleFileSelect() {
   const file = document.getElementById("fileInput").files[0];
   if (!file) return;
 
+  // Show Preview Immediately
   const previewContainer = document.getElementById("previewContainer");
   const previewImage = document.getElementById("previewImage");
-
   previewImage.src = URL.createObjectURL(file);
   previewContainer.classList.add("active");
 
+  // Reset optimized blob
+  optimizedImageBlob = null;
+  
+  // Start Optimization
   optimizeImage(file);
 }
 
@@ -431,6 +434,7 @@ function optimizeImage(file) {
 
     canvas.toBlob(blob => {
       optimizedImageBlob = blob;
+      console.log("✅ Image optimized and ready.");
     }, "image/jpeg", 0.7);
   };
 }
@@ -512,52 +516,69 @@ function removeTypingIndicator() {
   }
 }
 
+// --- MAIN FIX HERE ---
 async function sendMessage() {
   const input = document.getElementById("messageInput");
   const text = input.value.trim();
+  const fileInput = document.getElementById("fileInput"); // Get the raw file input
   const sendBtn = document.getElementById("sendBtn");
 
-  if (!text && !optimizedImageBlob) {
+  // 1. Determine which image to send (Optimized OR Original)
+  let imageToSend = optimizedImageBlob;
+  
+  // FALLBACK: If optimization isn't done, use the original file
+  if (!imageToSend && fileInput.files.length > 0) {
+      console.log("⚠️ Using original file (optimization not ready)");
+      imageToSend = fileInput.files[0];
+  }
+
+  // 2. Validation: Don't send if empty
+  if (!text && !imageToSend) {
     return;
   }
 
-  // Add user message
-  const imageUrl = optimizedImageBlob ? URL.createObjectURL(optimizedImageBlob) : null;
+  // 3. UI Updates
+  const imageUrl = imageToSend ? URL.createObjectURL(imageToSend) : null;
   addMessage(text || "Uploaded an image", true, imageUrl);
 
-  // Clear input
+  // Clear UI
   input.value = "";
   input.style.height = 'auto';
   removeImage();
-
-  // Disable send button
   sendBtn.disabled = true;
-
-  // Show typing indicator
   addTypingIndicator();
 
+  // 4. Construct Data
   const formData = new FormData();
   if (text) formData.append("text", text);
-  if (optimizedImageBlob) formData.append("image", optimizedImageBlob, "optimized.jpg");
+  
+  if (imageToSend) {
+    // If it's the raw file, it has a .name property. If it's a blob, we give it one.
+    const filename = imageToSend.name || "optimized_image.jpg";
+    formData.append("image", imageToSend, filename);
+  }
 
+  // 5. Send Request
   try {
     const res = await fetch("https://multimodal-chatbot-backend.onrender.com/chat", {
       method: "POST",
       body: formData
     });
 
+    if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+    }
+
     const data = await res.json();
     removeTypingIndicator();
     addMessage(data.reply, false);
 
   } catch (error) {
+    console.error("Error:", error);
     removeTypingIndicator();
-    addMessage("Sorry, I'm having trouble connecting. Please try again.", false);
+    addMessage("Sorry, something went wrong. Please try again.", false);
   } finally {
     sendBtn.disabled = false;
   }
 }
 </script>
-
-</body>
-</html>
